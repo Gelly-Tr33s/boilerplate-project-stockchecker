@@ -20,7 +20,7 @@ app.use(helmet.contentSecurityPolicy({
     styleSrc: ["'self'"],
    }
 }))
-
+app.use(express.json());
 
 
 
