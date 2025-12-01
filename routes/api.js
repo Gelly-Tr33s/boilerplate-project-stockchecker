@@ -8,7 +8,7 @@ module.exports = function (app) {
   const likesDB = {};
 
   function getAnonymizedIP(req) {
-    const ip = req.ip || req.headers['x-forwarded-for'] || '0.0.0.0';
+    const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
     return crypto.createHash('sha256').update(ip).digest('hex');
   }
 
@@ -16,7 +16,6 @@ module.exports = function (app) {
     const url = `https://stock-price-checker-proxy.freecodecamp.rocks/v1/stock/${stock}/quote`;
     const response = await fetch(url);
     const data = await response.json();
-
     return {
       stock: data.symbol,
       price: data.latestPrice
@@ -27,36 +26,39 @@ module.exports = function (app) {
     .get(async (req, res) => {
       const { stock, like } = req.query;
       const ipHash = getAnonymizedIP(req);
+      const isLike = like === 'true'; // Strict boolean check
 
       try {
         // ----- Single stock -----
         if (!Array.isArray(stock)) {
-          const stockInfo = await fetchStock(stock.toUpperCase());
+          const stockName = stock.toUpperCase();
+          const stockInfo = await fetchStock(stockName);
 
-          if (!likesDB[stockInfo.stock]) likesDB[stockInfo.stock] = new Set();
-
-          if (like) likesDB[stockInfo.stock].add(ipHash);
+          if (!likesDB[stockName]) likesDB[stockName] = new Set();
+          if (isLike) likesDB[stockName].add(ipHash);
 
           return res.json({
             stockData: {
               stock: stockInfo.stock,
               price: stockInfo.price,
-              likes: likesDB[stockInfo.stock].size
+              likes: likesDB[stockName].size
             }
           });
         }
 
         // ----- Two stocks -----
-        const stock1 = stock[0].toUpperCase();
-        const stock2 = stock[1].toUpperCase();
-
-        const data1 = await fetchStock(stock1);
-        const data2 = await fetchStock(stock2);
+        // Use Promise.all to fetch concurrently (prevents timeouts)
+        const [stock1, stock2] = [stock[0].toUpperCase(), stock[1].toUpperCase()];
+        
+        const [data1, data2] = await Promise.all([
+            fetchStock(stock1),
+            fetchStock(stock2)
+        ]);
 
         if (!likesDB[stock1]) likesDB[stock1] = new Set();
         if (!likesDB[stock2]) likesDB[stock2] = new Set();
 
-        if (like) {
+        if (isLike) {
           likesDB[stock1].add(ipHash);
           likesDB[stock2].add(ipHash);
         }
@@ -81,7 +83,7 @@ module.exports = function (app) {
 
       } catch (err) {
         console.error(err);
-        res.json({ error: 'Error fetching stock data' });
+        res.status(500).json({ error: 'Error fetching stock data' });
       }
     });
 };
